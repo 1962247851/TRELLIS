@@ -18,7 +18,7 @@ from ..utils import grad_clip_utils, elastic_utils
 class BasicTrainer(Trainer):
     """
     Trainer for basic training loop.
-    
+
     Args:
         models (dict[str, nn.Module]): Models to train.
         dataset (torch.utils.data.Dataset): Dataset.
@@ -355,7 +355,7 @@ class BasicTrainer(Trainer):
 
     def run_step(self, data_list):
         """
-        Run a training step with enhanced monitoring.
+        Run a training step.
         """
         step_log = {'loss': {}, 'status': {}}
         amp_context = partial(torch.autocast, device_type='cuda') if self.fp16_mode == 'amp' else nullcontext
@@ -368,7 +368,8 @@ class BasicTrainer(Trainer):
         zero_grad(self.model_params)
         for i, mb_data in enumerate(data_list):
             ## sync at the end of each batch split
-            sync_contexts = [self.training_models[name].no_sync for name in self.training_models] if i != len(data_list) - 1 and self.world_size > 1 else [nullcontext]
+            sync_contexts = [self.training_models[name].no_sync for name in self.training_models] if i != len(
+                data_list) - 1 and self.world_size > 1 else [nullcontext]
             with nested_contexts(*sync_contexts), elastic_controller_context():
                 with amp_context():
                     loss, status = self.training_losses(**mb_data)
@@ -387,7 +388,6 @@ class BasicTrainer(Trainer):
             if self.elastic_controller_config is not None:
                 elastic_controller_logs.append(self.elastic_controller.log())
         ## gradient clip
-        grad_norm = None
         if self.grad_clip is not None:
             if self.fp16_mode == 'amp':
                 self.scaler.unscale_(self.optimizer)
@@ -422,7 +422,7 @@ class BasicTrainer(Trainer):
                 self.optimizer.step()
             else:
                 print('\n\033[93mWarning: NaN detected in gradients. Skipping update.\033[0m')
-        ## adjust learning rate
+                ## adjust learning rate
         if self.lr_scheduler_config is not None:
             statuses[-1]['lr'] = self.lr_scheduler.get_last_lr()[0]
             self.lr_scheduler.step()
@@ -435,20 +435,16 @@ class BasicTrainer(Trainer):
             step_log['elastic'] = dict_reduce(elastic_controller_logs, lambda x: np.mean(x))
         if self.grad_clip is not None:
             step_log['grad_clip'] = self.grad_clip if isinstance(self.grad_clip, float) else self.grad_clip.log()
-        # 添加额外的监控指标
-        if grad_norm is not None:
-            step_log['status']['grad_norm'] = grad_norm.item()
+
         # Check grad and norm of each param
         if self.log_param_stats:
             param_norms = {}
             param_grads = {}
-            for name, model in self.models.items():
-                for param_name, param in model.named_parameters():
-                    if param.requires_grad:
-                        full_name = f"{name}/{param_name}"
-                        param_norms[full_name] = param.norm().item()
-                        if param.grad is not None and torch.isfinite(param.grad).all():
-                            param_grads[full_name] = param.grad.norm().item() / prev_scale
+            for name, param in self.backbone.named_parameters():
+                if param.requires_grad:
+                    param_norms[name] = param.norm().item()
+                    if param.grad is not None and torch.isfinite(param.grad).all():
+                        param_grads[name] = param.grad.norm().item() / prev_scale
             step_log['param_norms'] = param_norms
             step_log['param_grads'] = param_grads
 

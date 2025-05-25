@@ -20,6 +20,7 @@ class Trainer:
     """
     Base class for training.
     """
+
     def __init__(self,
                  models,
                  dataset,
@@ -46,7 +47,6 @@ class Trainer:
                  i_sample=10000,
                  i_save=10000,
                  i_ddpcheck=10000,
-                 monitor=None,  # 添加监控器参数
                  **kwargs
                  ):
         assert batch_size is not None or batch_size_per_gpu is not None, 'Either batch_size or batch_size_per_gpu must be specified.'
@@ -73,9 +73,6 @@ class Trainer:
         self.i_sample = i_sample
         self.i_save = i_save
         self.i_ddpcheck = i_ddpcheck
-
-        # 添加监控器
-        self.monitor = monitor
 
         if dist.is_initialized():
             # Multi-GPU params
@@ -116,21 +113,21 @@ class Trainer:
         if self.is_master:
             print('\n\nTrainer initialized.')
             print(self)
-            
+
     @property
     def device(self):
         for _, model in self.models.items():
             if hasattr(model, 'device'):
                 return model.device
         return next(list(self.models.values())[0].parameters()).device
-            
+
     @abstractmethod
     def init_models_and_more(self, **kwargs):
         """
         Initialize models and more.
         """
         pass
-    
+
     def prepare_dataloader(self, **kwargs):
         """
         Prepare dataloader.
@@ -166,7 +163,7 @@ class Trainer:
         Should be called only by the rank 0 process.
         """
         pass
-    
+
     @abstractmethod
     def finetune_from(self, finetune_ckpt):
         """
@@ -174,7 +171,7 @@ class Trainer:
         Should be called by all processes.
         """
         pass
-    
+
     @abstractmethod
     def run_snapshot(self, num_samples, batch_size=4, verbose=False, **kwargs):
         """
@@ -311,7 +308,7 @@ class Trainer:
         Compute training losses.
         """
         pass
-    
+
     def load_data(self):
         """
         Load data.
@@ -323,7 +320,7 @@ class Trainer:
             self._data_prefetched = recursive_to_device(next(self.data_iterator), self.device, non_blocking=True)
         else:
             data = recursive_to_device(next(self.data_iterator), self.device, non_blocking=True)
-        
+
         # if the data is a dict, we need to split it into multiple dicts with batch_size_per_gpu
         if isinstance(data, dict):
             if self.batch_split == 1:
@@ -331,14 +328,15 @@ class Trainer:
             else:
                 batch_size = list(data.values())[0].shape[0]
                 data_list = [
-                    {k: v[i * batch_size // self.batch_split:(i + 1) * batch_size // self.batch_split] for k, v in data.items()}
+                    {k: v[i * batch_size // self.batch_split:(i + 1) * batch_size // self.batch_split] for k, v in
+                     data.items()}
                     for i in range(self.batch_split)
                 ]
         elif isinstance(data, list):
             data_list = data
         else:
             raise ValueError('Data must be a dict or a list of dicts.')
-        
+
         return data_list
 
     @abstractmethod
@@ -350,21 +348,19 @@ class Trainer:
 
     def run(self):
         """
-        Run training with integrated monitoring.
+        Run training.
         """
         if self.is_master:
             print('\nStarting training...')
             self.snapshot_dataset()
         if self.step == 0:
             self.snapshot(suffix='init')
-        else: # resume
+        else:  # resume
             self.snapshot(suffix=f'resume_step{self.step:07d}')
 
         log = []
         time_last_print = 0.0
         time_elapsed = 0.0
-        time_start_total = time.time()
-
         while self.step < self.max_steps:
             time_start = time.time()
 
@@ -373,44 +369,8 @@ class Trainer:
 
             time_end = time.time()
             time_elapsed += time_end - time_start
-            step_time = time_end - time_start
 
             self.step += 1
-
-            # 监控器集成
-            if self.monitor is not None and self.is_master:
-                # 准备指标
-                metrics = {}
-
-                # 从step_log提取指标
-                if step_log is not None:
-                    # 展平嵌套字典
-                    flat_log = dict_flatten(step_log, sep='/')
-                    for key, value in flat_log.items():
-                        if isinstance(value, (int, float, np.number)):
-                            metrics[key] = value
-                        elif isinstance(value, torch.Tensor):
-                            metrics[key] = value.item()
-
-                # 添加学习率
-                if hasattr(self, 'optimizer'):
-                    metrics['lr'] = self.optimizer.param_groups[0]['lr']
-
-                # 记录到监控器
-                self.monitor.log_metrics(metrics, self.step)
-
-                # 定期记录系统状态
-                if self.step % 100 == 0:
-                    self.monitor.log_system_stats(self.step)
-
-                # 记录训练速度
-                batch_size = self.batch_size_per_gpu * self.batch_split
-                eta_str = self.monitor.log_training_speed(batch_size, self.step, step_time)
-
-                # 定期记录模型统计
-                if self.step % 1000 == 0:
-                    for name, model in self.models.items():
-                        self.monitor.log_model_stats(model, self.step)
 
             # Print progress
             if self.is_master and self.step % self.i_print == 0:
@@ -421,8 +381,6 @@ class Trainer:
                     f'Speed: {speed:.2f} steps/h',
                     f'ETA: {(self.max_steps - self.step) / speed:.2f} h',
                 ]
-                if 'loss/loss' in metrics:
-                    columns.append(f'Loss: {metrics["loss/loss"]:.4f}')
                 print(' | '.join([c.ljust(25) for c in columns]), flush=True)
                 time_last_print = time_elapsed
 
@@ -433,9 +391,6 @@ class Trainer:
             # Sample images
             if self.step % self.i_sample == 0:
                 self.snapshot()
-                # 如果有监控器，记录样本
-                if self.monitor is not None and self.is_master and hasattr(self, 'log_samples_to_monitor'):
-                    self.log_samples_to_monitor()
 
             if self.is_master:
                 log.append((self.step, {}))
@@ -465,7 +420,7 @@ class Trainer:
                     with open(os.path.join(self.output_dir, 'log.txt'), 'a') as log_file:
                         log_file.write(log_str + '\n')
 
-                    # show with mlflow/tensorboard
+                    # show with mlflow
                     log_show = [l for _, l in log if not dict_any(l, lambda x: np.isnan(x))]
                     log_show = dict_reduce(log_show, lambda x: np.mean(x))
                     log_show = dict_flatten(log_show, sep='/')
@@ -477,27 +432,21 @@ class Trainer:
                 if self.step % self.i_save == 0:
                     self.save()
 
-        # 训练结束，关闭监控器
-        if self.monitor is not None and self.is_master:
-            print('\nTraining completed!')
-            self.monitor.close()
-
         if self.is_master:
             self.snapshot(suffix='final')
             self.writer.close()
             print('Training finished.')
-            
+
     def profile(self, wait=2, warmup=3, active=5):
         """
         Profile the training loop.
         """
         with torch.profiler.profile(
-            schedule=torch.profiler.schedule(wait=wait, warmup=warmup, active=active, repeat=1),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(os.path.join(self.output_dir, 'profile')),
-            profile_memory=True,
-            with_stack=True,
+                schedule=torch.profiler.schedule(wait=wait, warmup=warmup, active=active, repeat=1),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler(os.path.join(self.output_dir, 'profile')),
+                profile_memory=True,
+                with_stack=True,
         ) as prof:
             for _ in range(wait + warmup + active):
                 self.run_step()
                 prof.step()
-            

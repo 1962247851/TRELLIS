@@ -1,5 +1,3 @@
-import os
-from PIL import Image
 from typing import *
 import copy
 import torch
@@ -19,7 +17,7 @@ from .mixins.image_conditioned import ImageConditionedMixin
 class FlowMatchingTrainer(BasicTrainer):
     """
     Trainer for diffusion model with flow matching objective.
-    
+
     Args:
         models (dict[str, nn.Module]): Models to train.
         dataset (torch.utils.data.Dataset): Dataset.
@@ -236,30 +234,11 @@ class FlowMatchingTrainer(BasicTrainer):
 
         return sample_dict
 
-    def log_samples_to_monitor(self):
-        """记录生成样本到监控器"""
-        if self.monitor is None or not self.is_master:
-            return
-
-        try:
-            # 加载最新的样本图像
-            latest_sample_dir = os.path.join(self.output_dir, 'samples', f'step{self.step:07d}')
-            if os.path.exists(latest_sample_dir):
-                for img_file in os.listdir(latest_sample_dir):
-                    if img_file.endswith('.jpg'):
-                        img_path = os.path.join(latest_sample_dir, img_file)
-                        # 这里需要根据实际情况读取图像
-                        img = Image.open(img_path)
-                        img_array = np.array(img)
-                        self.monitor.log_image(f'samples/{img_file[:-4]}', img_array, self.step)
-        except Exception as e:
-            print(f"Warning: Failed to log samples to monitor: {e}")
-
 
 class FlowMatchingCFGTrainer(ClassifierFreeGuidanceMixin, FlowMatchingTrainer):
     """
     Trainer for diffusion model with flow matching objective and classifier-free guidance.
-    
+
     Args:
         models (dict[str, nn.Module]): Models to train.
         dataset (torch.utils.data.Dataset): Dataset.
@@ -298,7 +277,7 @@ class FlowMatchingCFGTrainer(ClassifierFreeGuidanceMixin, FlowMatchingTrainer):
 class TextConditionedFlowMatchingCFGTrainer(TextConditionedMixin, FlowMatchingCFGTrainer):
     """
     Trainer for text-conditioned diffusion model with flow matching objective and classifier-free guidance.
-    
+
     Args:
         models (dict[str, nn.Module]): Models to train.
         dataset (torch.utils.data.Dataset): Dataset.
@@ -338,7 +317,7 @@ class TextConditionedFlowMatchingCFGTrainer(TextConditionedMixin, FlowMatchingCF
 class ImageConditionedFlowMatchingCFGTrainer(ImageConditionedMixin, FlowMatchingCFGTrainer):
     """
     Trainer for image-conditioned diffusion model with flow matching objective and classifier-free guidance.
-    
+
     Args:
         models (dict[str, nn.Module]): Models to train.
         dataset (torch.utils.data.Dataset): Dataset.

@@ -21,33 +21,34 @@ class Trainer:
     Base class for training.
     """
     def __init__(self,
-        models,
-        dataset,
-        *,
-        output_dir,
-        load_dir,
-        step,
-        max_steps,
-        batch_size=None,
-        batch_size_per_gpu=None,
-        batch_split=None,
-        optimizer={},
-        lr_scheduler=None,
-        elastic=None,
-        grad_clip=None,
-        ema_rate=0.9999,
-        fp16_mode='inflat_all',
-        fp16_scale_growth=1e-3,
-        finetune_ckpt=None,
-        log_param_stats=False,
-        prefetch_data=True,
-        i_print=1000,
-        i_log=500,
-        i_sample=10000,
-        i_save=10000,
-        i_ddpcheck=10000,
-        **kwargs
-    ):
+                 models,
+                 dataset,
+                 *,
+                 output_dir,
+                 load_dir,
+                 step,
+                 max_steps,
+                 batch_size=None,
+                 batch_size_per_gpu=None,
+                 batch_split=None,
+                 optimizer={},
+                 lr_scheduler=None,
+                 elastic=None,
+                 grad_clip=None,
+                 ema_rate=0.9999,
+                 fp16_mode='inflat_all',
+                 fp16_scale_growth=1e-3,
+                 finetune_ckpt=None,
+                 log_param_stats=False,
+                 prefetch_data=True,
+                 i_print=1000,
+                 i_log=500,
+                 i_sample=10000,
+                 i_save=10000,
+                 i_ddpcheck=10000,
+                 monitor=None,  # 添加监控器参数
+                 **kwargs
+                 ):
         assert batch_size is not None or batch_size_per_gpu is not None, 'Either batch_size or batch_size_per_gpu must be specified.'
 
         self.models = models
@@ -71,7 +72,10 @@ class Trainer:
         self.i_log = i_log
         self.i_sample = i_sample
         self.i_save = i_save
-        self.i_ddpcheck = i_ddpcheck        
+        self.i_ddpcheck = i_ddpcheck
+
+        # 添加监控器
+        self.monitor = monitor
 
         if dist.is_initialized():
             # Multi-GPU params
@@ -93,14 +97,14 @@ class Trainer:
 
         self.init_models_and_more(**kwargs)
         self.prepare_dataloader(**kwargs)
-        
+
         # Load checkpoint
         self.step = 0
         if load_dir is not None and step is not None:
             self.load(load_dir, step)
         elif finetune_ckpt is not None:
             self.finetune_from(finetune_ckpt)
-        
+
         if self.is_master:
             os.makedirs(os.path.join(self.output_dir, 'ckpts'), exist_ok=True)
             os.makedirs(os.path.join(self.output_dir, 'samples'), exist_ok=True)
@@ -108,7 +112,7 @@ class Trainer:
 
         if self.world_size > 1:
             self.check_ddp()
-            
+
         if self.is_master:
             print('\n\nTrainer initialized.')
             print(self)
@@ -346,7 +350,7 @@ class Trainer:
 
     def run(self):
         """
-        Run training.
+        Run training with integrated monitoring.
         """
         if self.is_master:
             print('\nStarting training...')
@@ -359,6 +363,8 @@ class Trainer:
         log = []
         time_last_print = 0.0
         time_elapsed = 0.0
+        time_start_total = time.time()
+
         while self.step < self.max_steps:
             time_start = time.time()
 
@@ -367,8 +373,44 @@ class Trainer:
 
             time_end = time.time()
             time_elapsed += time_end - time_start
+            step_time = time_end - time_start
 
             self.step += 1
+
+            # 监控器集成
+            if self.monitor is not None and self.is_master:
+                # 准备指标
+                metrics = {}
+
+                # 从step_log提取指标
+                if step_log is not None:
+                    # 展平嵌套字典
+                    flat_log = dict_flatten(step_log, sep='/')
+                    for key, value in flat_log.items():
+                        if isinstance(value, (int, float, np.number)):
+                            metrics[key] = value
+                        elif isinstance(value, torch.Tensor):
+                            metrics[key] = value.item()
+
+                # 添加学习率
+                if hasattr(self, 'optimizer'):
+                    metrics['lr'] = self.optimizer.param_groups[0]['lr']
+
+                # 记录到监控器
+                self.monitor.log_metrics(metrics, self.step)
+
+                # 定期记录系统状态
+                if self.step % 100 == 0:
+                    self.monitor.log_system_stats(self.step)
+
+                # 记录训练速度
+                batch_size = self.batch_size_per_gpu * self.batch_split
+                eta_str = self.monitor.log_training_speed(batch_size, self.step, step_time)
+
+                # 定期记录模型统计
+                if self.step % 1000 == 0:
+                    for name, model in self.models.items():
+                        self.monitor.log_model_stats(model, self.step)
 
             # Print progress
             if self.is_master and self.step % self.i_print == 0:
@@ -379,6 +421,8 @@ class Trainer:
                     f'Speed: {speed:.2f} steps/h',
                     f'ETA: {(self.max_steps - self.step) / speed:.2f} h',
                 ]
+                if 'loss/loss' in metrics:
+                    columns.append(f'Loss: {metrics["loss/loss"]:.4f}')
                 print(' | '.join([c.ljust(25) for c in columns]), flush=True)
                 time_last_print = time_elapsed
 
@@ -389,6 +433,9 @@ class Trainer:
             # Sample images
             if self.step % self.i_sample == 0:
                 self.snapshot()
+                # 如果有监控器，记录样本
+                if self.monitor is not None and self.is_master and hasattr(self, 'log_samples_to_monitor'):
+                    self.log_samples_to_monitor()
 
             if self.is_master:
                 log.append((self.step, {}))
@@ -418,7 +465,7 @@ class Trainer:
                     with open(os.path.join(self.output_dir, 'log.txt'), 'a') as log_file:
                         log_file.write(log_str + '\n')
 
-                    # show with mlflow
+                    # show with mlflow/tensorboard
                     log_show = [l for _, l in log if not dict_any(l, lambda x: np.isnan(x))]
                     log_show = dict_reduce(log_show, lambda x: np.mean(x))
                     log_show = dict_flatten(log_show, sep='/')
@@ -429,6 +476,11 @@ class Trainer:
                 # Save checkpoint
                 if self.step % self.i_save == 0:
                     self.save()
+
+        # 训练结束，关闭监控器
+        if self.monitor is not None and self.is_master:
+            print('\nTraining completed!')
+            self.monitor.close()
 
         if self.is_master:
             self.snapshot(suffix='final')

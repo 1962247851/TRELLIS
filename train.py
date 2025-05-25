@@ -90,36 +90,18 @@ def main(local_rank, cfg):
     # 创建监控器（只在主进程创建）
     monitor = None
     if rank == 0 and not cfg.tryrun:
-        # 准备监控配置
-        monitor_config = {
-            'model': cfg.models,
-            'dataset': cfg.dataset.name,
-            'trainer': cfg.trainer.name,
-            'batch_size': cfg.trainer.args.get('batch_size_per_gpu', 1),
-            'max_steps': cfg.trainer.args.get('max_steps', 1000000),
-            'learning_rate': cfg.trainer.args.optimizer.args.get('lr', 1e-4),
-            'data_dir': cfg.data_dir,
-            'output_dir': cfg.output_dir,
-            'node_rank': cfg.node_rank,
-            'num_nodes': cfg.num_nodes,
-            'num_gpus': cfg.num_gpus,
-        }
-
-        # 初始化监控器
         monitor = ComprehensiveMonitor(
             output_dir=cfg.output_dir,
             experiment_name=cfg.get('experiment_name', None),
-            config=monitor_config,
+            config=cfg.__dict__,
             enable_tensorboard=cfg.get('enable_tensorboard', True),
             enable_plots=cfg.get('enable_plots', True),
             plot_interval=cfg.trainer.args.get('i_log', 500),
             save_interval=cfg.trainer.args.get('i_save', 10000),
-            history_size=cfg.get('monitor_history_size', 10000),
-            moving_average_window=cfg.get('monitor_ma_window', 100)
         )
-
-        print(f"\n监控系统已启动，日志保存在: {monitor.log_dir}")
-        print(f"使用 'tensorboard --logdir={monitor.log_dir}' 查看实时数据\n")
+        print(f"\n监控系统已启动")
+        print(f"TensorBoard日志: {monitor.log_dir}")
+        print(f"图表保存位置: {monitor.plot_dir}")
 
     # Build trainer - 传入监控器
     trainer = getattr(trainers, cfg.trainer.name)(
@@ -153,7 +135,8 @@ if __name__ == '__main__':
     ## io and resume
     parser.add_argument('--output_dir', type=str, required=True, help='Output directory')
     parser.add_argument('--load_dir', type=str, default='', help='Load directory, default to output_dir')
-    parser.add_argument('--ckpt', type=str, default='latest', help='Checkpoint step to resume training, default to latest')
+    parser.add_argument('--ckpt', type=str, default='latest',
+                        help='Checkpoint step to resume training, default to latest')
     parser.add_argument('--data_dir', type=str, default='./data/', help='Data directory')
     parser.add_argument('--auto_retry', type=int, default=3, help='Number of retries on error')
     ## dubug

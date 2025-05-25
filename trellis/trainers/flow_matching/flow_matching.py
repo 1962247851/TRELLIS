@@ -1,3 +1,5 @@
+import os
+from PIL import Image
 from typing import *
 import copy
 import torch
@@ -7,7 +9,7 @@ import numpy as np
 from easydict import EasyDict as edict
 
 from ..basic import BasicTrainer
-from ...pipelines import samplers 
+from ...pipelines import samplers
 from ...utils.general_utils import dict_reduce
 from .mixins.classifier_free_guidance import ClassifierFreeGuidanceMixin
 from .mixins.text_conditioned import TextConditionedMixin
@@ -49,18 +51,19 @@ class FlowMatchingTrainer(BasicTrainer):
         t_schedule (dict): Time schedule for flow matching.
         sigma_min (float): Minimum noise level.
     """
+
     def __init__(
-        self,
-        *args,
-        t_schedule: dict = {
-            'name': 'logitNormal',
-            'args': {
-                'mean': 0.0,
-                'std': 1.0,
-            }
-        },
-        sigma_min: float = 1e-5,
-        **kwargs
+            self,
+            *args,
+            t_schedule: dict = {
+                'name': 'logitNormal',
+                'args': {
+                    'mean': 0.0,
+                    'std': 1.0,
+                }
+            },
+            sigma_min: float = 1e-5,
+            **kwargs
     ):
         super().__init__(*args, **kwargs)
         self.t_schedule = t_schedule
@@ -108,7 +111,7 @@ class FlowMatchingTrainer(BasicTrainer):
         Get the conditioning data.
         """
         return cond
-    
+
     def get_inference_cond(self, cond, **kwargs):
         """
         Get the conditioning data for inference.
@@ -120,7 +123,7 @@ class FlowMatchingTrainer(BasicTrainer):
         Get the sampler for the diffusion process.
         """
         return samplers.FlowEulerSampler(self.sigma_min)
-    
+
     def vis_cond(self, **kwargs):
         """
         Visualize the conditioning data.
@@ -142,10 +145,10 @@ class FlowMatchingTrainer(BasicTrainer):
         return t
 
     def training_losses(
-        self,
-        x_0: torch.Tensor,
-        cond=None,
-        **kwargs
+            self,
+            x_0: torch.Tensor,
+            cond=None,
+            **kwargs
     ) -> Tuple[Dict, Dict]:
         """
         Compute training losses for a single timestep.
@@ -163,7 +166,7 @@ class FlowMatchingTrainer(BasicTrainer):
         t = self.sample_t(x_0.shape[0]).to(x_0.device).float()
         x_t = self.diffuse(x_0, t, noise=noise)
         cond = self.get_cond(cond, **kwargs)
-        
+
         pred = self.training_models['denoiser'](x_t, t * 1000, cond, **kwargs)
         assert pred.shape == noise.shape == x_0.shape
         target = self.get_v(x_0, noise, t)
@@ -182,13 +185,13 @@ class FlowMatchingTrainer(BasicTrainer):
                 terms[f"bin_{i}"] = {"mse": mse_per_instance[time_bin == i].mean()}
 
         return terms, {}
-    
+
     @torch.no_grad()
     def run_snapshot(
-        self,
-        num_samples: int,
-        batch_size: int,
-        verbose: bool = False,
+            self,
+            num_samples: int,
+            batch_size: int,
+            verbose: bool = False,
     ) -> Dict:
         dataloader = DataLoader(
             copy.deepcopy(self.dataset),
@@ -230,10 +233,29 @@ class FlowMatchingTrainer(BasicTrainer):
             'value': lambda x: torch.cat(x, dim=0),
             'type': lambda x: x[0],
         }))
-        
+
         return sample_dict
 
-    
+    def log_samples_to_monitor(self):
+        """记录生成样本到监控器"""
+        if self.monitor is None or not self.is_master:
+            return
+
+        try:
+            # 加载最新的样本图像
+            latest_sample_dir = os.path.join(self.output_dir, 'samples', f'step{self.step:07d}')
+            if os.path.exists(latest_sample_dir):
+                for img_file in os.listdir(latest_sample_dir):
+                    if img_file.endswith('.jpg'):
+                        img_path = os.path.join(latest_sample_dir, img_file)
+                        # 这里需要根据实际情况读取图像
+                        img = Image.open(img_path)
+                        img_array = np.array(img)
+                        self.monitor.log_image(f'samples/{img_file[:-4]}', img_array, self.step)
+        except Exception as e:
+            print(f"Warning: Failed to log samples to monitor: {e}")
+
+
 class FlowMatchingCFGTrainer(ClassifierFreeGuidanceMixin, FlowMatchingTrainer):
     """
     Trainer for diffusion model with flow matching objective and classifier-free guidance.

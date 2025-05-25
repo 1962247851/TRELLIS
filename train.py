@@ -9,9 +9,13 @@ import torch
 import torch.multiprocessing as mp
 import numpy as np
 import random
+import time
 
 from trellis import models, datasets, trainers
 from trellis.utils.dist_utils import setup_dist
+
+# 导入监控系统
+from trellis.utils.monitor import ComprehensiveMonitor
 
 
 def find_ckpt(cfg):
@@ -83,15 +87,62 @@ def main(local_rank, cfg):
             with open(os.path.join(cfg.output_dir, f'{name}_model_summary.txt'), 'w') as fp:
                 print(model_summary, file=fp)
 
-    # Build trainer
-    trainer = getattr(trainers, cfg.trainer.name)(model_dict, dataset, **cfg.trainer.args, output_dir=cfg.output_dir, load_dir=cfg.load_dir, step=cfg.load_ckpt)
+    # 创建监控器（只在主进程创建）
+    monitor = None
+    if rank == 0 and not cfg.tryrun:
+        # 准备监控配置
+        monitor_config = {
+            'model': cfg.models,
+            'dataset': cfg.dataset.name,
+            'trainer': cfg.trainer.name,
+            'batch_size': cfg.trainer.args.get('batch_size_per_gpu', 1),
+            'max_steps': cfg.trainer.args.get('max_steps', 1000000),
+            'learning_rate': cfg.trainer.args.optimizer.args.get('lr', 1e-4),
+            'data_dir': cfg.data_dir,
+            'output_dir': cfg.output_dir,
+            'node_rank': cfg.node_rank,
+            'num_nodes': cfg.num_nodes,
+            'num_gpus': cfg.num_gpus,
+        }
+
+        # 初始化监控器
+        monitor = ComprehensiveMonitor(
+            output_dir=cfg.output_dir,
+            experiment_name=cfg.get('experiment_name', None),
+            config=monitor_config,
+            enable_tensorboard=cfg.get('enable_tensorboard', True),
+            enable_plots=cfg.get('enable_plots', True),
+            plot_interval=cfg.trainer.args.get('i_log', 500),
+            save_interval=cfg.trainer.args.get('i_save', 10000),
+            history_size=cfg.get('monitor_history_size', 10000),
+            moving_average_window=cfg.get('monitor_ma_window', 100)
+        )
+
+        print(f"\n监控系统已启动，日志保存在: {monitor.log_dir}")
+        print(f"使用 'tensorboard --logdir={monitor.log_dir}' 查看实时数据\n")
+
+    # Build trainer - 传入监控器
+    trainer = getattr(trainers, cfg.trainer.name)(
+        model_dict,
+        dataset,
+        **cfg.trainer.args,
+        output_dir=cfg.output_dir,
+        load_dir=cfg.load_dir,
+        step=cfg.load_ckpt,
+        monitor=monitor  # 传入监控器
+    )
 
     # Train
     if not cfg.tryrun:
-        if cfg.profile:
-            trainer.profile()
-        else:
-            trainer.run()
+        try:
+            if cfg.profile:
+                trainer.profile()
+            else:
+                trainer.run()
+        finally:
+            # 确保监控器正确关闭
+            if monitor is not None:
+                monitor.close()
 
 
 if __name__ == '__main__':
@@ -108,6 +159,10 @@ if __name__ == '__main__':
     ## dubug
     parser.add_argument('--tryrun', action='store_true', help='Try run without training')
     parser.add_argument('--profile', action='store_true', help='Profile training')
+    ## monitoring
+    parser.add_argument('--enable_tensorboard', action='store_true', default=True, help='Enable TensorBoard logging')
+    parser.add_argument('--enable_plots', action='store_true', default=True, help='Enable plot generation')
+    parser.add_argument('--experiment_name', type=str, default=None, help='Experiment name for monitoring')
     ## multi-node and multi-gpu
     parser.add_argument('--num_nodes', type=int, default=1, help='Number of nodes')
     parser.add_argument('--node_rank', type=int, default=0, help='Node rank')
@@ -155,4 +210,3 @@ if __name__ == '__main__':
             except Exception as e:
                 print(f'Error: {e}')
                 print(f'Retrying ({rty + 1}/{cfg.auto_retry})...')
-            

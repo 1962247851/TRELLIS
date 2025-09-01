@@ -20,34 +20,35 @@ class Trainer:
     """
     Base class for training.
     """
+
     def __init__(self,
-        models,
-        dataset,
-        *,
-        output_dir,
-        load_dir,
-        step,
-        max_steps,
-        batch_size=None,
-        batch_size_per_gpu=None,
-        batch_split=None,
-        optimizer={},
-        lr_scheduler=None,
-        elastic=None,
-        grad_clip=None,
-        ema_rate=0.9999,
-        fp16_mode='inflat_all',
-        fp16_scale_growth=1e-3,
-        finetune_ckpt=None,
-        log_param_stats=False,
-        prefetch_data=True,
-        i_print=1000,
-        i_log=500,
-        i_sample=10000,
-        i_save=10000,
-        i_ddpcheck=10000,
-        **kwargs
-    ):
+                 models,
+                 dataset,
+                 *,
+                 output_dir,
+                 load_dir,
+                 step,
+                 max_steps,
+                 batch_size=None,
+                 batch_size_per_gpu=None,
+                 batch_split=None,
+                 optimizer={},
+                 lr_scheduler=None,
+                 elastic=None,
+                 grad_clip=None,
+                 ema_rate=0.9999,
+                 fp16_mode='inflat_all',
+                 fp16_scale_growth=1e-3,
+                 finetune_ckpt=None,
+                 log_param_stats=False,
+                 prefetch_data=True,
+                 i_print=1000,
+                 i_log=500,
+                 i_sample=10000,
+                 i_save=10000,
+                 i_ddpcheck=10000,
+                 **kwargs
+                 ):
         assert batch_size is not None or batch_size_per_gpu is not None, 'Either batch_size or batch_size_per_gpu must be specified.'
 
         self.models = models
@@ -71,7 +72,7 @@ class Trainer:
         self.i_log = i_log
         self.i_sample = i_sample
         self.i_save = i_save
-        self.i_ddpcheck = i_ddpcheck        
+        self.i_ddpcheck = i_ddpcheck
 
         if dist.is_initialized():
             # Multi-GPU params
@@ -93,14 +94,14 @@ class Trainer:
 
         self.init_models_and_more(**kwargs)
         self.prepare_dataloader(**kwargs)
-        
+
         # Load checkpoint
         self.step = 0
         if load_dir is not None and step is not None:
             self.load(load_dir, step)
         elif finetune_ckpt is not None:
             self.finetune_from(finetune_ckpt)
-        
+
         if self.is_master:
             os.makedirs(os.path.join(self.output_dir, 'ckpts'), exist_ok=True)
             os.makedirs(os.path.join(self.output_dir, 'samples'), exist_ok=True)
@@ -108,25 +109,25 @@ class Trainer:
 
         if self.world_size > 1:
             self.check_ddp()
-            
+
         if self.is_master:
             print('\n\nTrainer initialized.')
             print(self)
-            
+
     @property
     def device(self):
         for _, model in self.models.items():
             if hasattr(model, 'device'):
                 return model.device
         return next(list(self.models.values())[0].parameters()).device
-            
+
     @abstractmethod
     def init_models_and_more(self, **kwargs):
         """
         Initialize models and more.
         """
         pass
-    
+
     def prepare_dataloader(self, **kwargs):
         """
         Prepare dataloader.
@@ -162,7 +163,7 @@ class Trainer:
         Should be called only by the rank 0 process.
         """
         pass
-    
+
     @abstractmethod
     def finetune_from(self, finetune_ckpt):
         """
@@ -170,7 +171,7 @@ class Trainer:
         Should be called by all processes.
         """
         pass
-    
+
     @abstractmethod
     def run_snapshot(self, num_samples, batch_size=4, verbose=False, **kwargs):
         """
@@ -307,7 +308,7 @@ class Trainer:
         Compute training losses.
         """
         pass
-    
+
     def load_data(self):
         """
         Load data.
@@ -319,7 +320,7 @@ class Trainer:
             self._data_prefetched = recursive_to_device(next(self.data_iterator), self.device, non_blocking=True)
         else:
             data = recursive_to_device(next(self.data_iterator), self.device, non_blocking=True)
-        
+
         # if the data is a dict, we need to split it into multiple dicts with batch_size_per_gpu
         if isinstance(data, dict):
             if self.batch_split == 1:
@@ -327,14 +328,15 @@ class Trainer:
             else:
                 batch_size = list(data.values())[0].shape[0]
                 data_list = [
-                    {k: v[i * batch_size // self.batch_split:(i + 1) * batch_size // self.batch_split] for k, v in data.items()}
+                    {k: v[i * batch_size // self.batch_split:(i + 1) * batch_size // self.batch_split] for k, v in
+                     data.items()}
                     for i in range(self.batch_split)
                 ]
         elif isinstance(data, list):
             data_list = data
         else:
             raise ValueError('Data must be a dict or a list of dicts.')
-        
+
         return data_list
 
     @abstractmethod
@@ -353,7 +355,7 @@ class Trainer:
             self.snapshot_dataset()
         if self.step == 0:
             self.snapshot(suffix='init')
-        else: # resume
+        else:  # resume
             self.snapshot(suffix=f'resume_step{self.step:07d}')
 
         log = []
@@ -434,18 +436,17 @@ class Trainer:
             self.snapshot(suffix='final')
             self.writer.close()
             print('Training finished.')
-            
+
     def profile(self, wait=2, warmup=3, active=5):
         """
         Profile the training loop.
         """
         with torch.profiler.profile(
-            schedule=torch.profiler.schedule(wait=wait, warmup=warmup, active=active, repeat=1),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(os.path.join(self.output_dir, 'profile')),
-            profile_memory=True,
-            with_stack=True,
+                schedule=torch.profiler.schedule(wait=wait, warmup=warmup, active=active, repeat=1),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler(os.path.join(self.output_dir, 'profile')),
+                profile_memory=True,
+                with_stack=True,
         ) as prof:
             for _ in range(wait + warmup + active):
                 self.run_step()
                 prof.step()
-            

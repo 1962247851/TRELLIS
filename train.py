@@ -84,7 +84,8 @@ def main(local_rank, cfg):
                 print(model_summary, file=fp)
 
     # Build trainer
-    trainer = getattr(trainers, cfg.trainer.name)(model_dict, dataset, **cfg.trainer.args, output_dir=cfg.output_dir, load_dir=cfg.load_dir, step=cfg.load_ckpt)
+    trainer = getattr(trainers, cfg.trainer.name)(model_dict, dataset, **cfg.trainer.args, output_dir=cfg.output_dir,
+                                                  load_dir=cfg.load_dir, step=cfg.load_ckpt)
 
     # Train
     if not cfg.tryrun:
@@ -102,7 +103,8 @@ if __name__ == '__main__':
     ## io and resume
     parser.add_argument('--output_dir', type=str, required=True, help='Output directory')
     parser.add_argument('--load_dir', type=str, default='', help='Load directory, default to output_dir')
-    parser.add_argument('--ckpt', type=str, default='latest', help='Checkpoint step to resume training, default to latest')
+    parser.add_argument('--ckpt', type=str, default='latest',
+                        help='Checkpoint step to resume training, default to latest')
     parser.add_argument('--data_dir', type=str, default='./data/', help='Data directory')
     parser.add_argument('--auto_retry', type=int, default=3, help='Number of retries on error')
     ## dubug
@@ -155,4 +157,3 @@ if __name__ == '__main__':
             except Exception as e:
                 print(f'Error: {e}')
                 print(f'Retrying ({rty + 1}/{cfg.auto_retry})...')
-            

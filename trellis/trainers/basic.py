@@ -18,7 +18,7 @@ from ..utils import grad_clip_utils, elastic_utils
 class BasicTrainer(Trainer):
     """
     Trainer for basic training loop.
-    
+
     Args:
         models (dict[str, nn.Module]): Models to train.
         dataset (torch.utils.data.Dataset): Dataset.
@@ -74,7 +74,7 @@ class BasicTrainer(Trainer):
         lines.append(f'  - EMA rate: {self.ema_rate}')
         lines.append(f'  - FP16 mode: {self.fp16_mode}')
         return '\n'.join(lines)
-            
+
     def init_models_and_more(self, **kwargs):
         """
         Initialize models and more.
@@ -97,7 +97,7 @@ class BasicTrainer(Trainer):
         # Build master params
         self.model_params = sum(
             [[p for p in model.parameters() if p.requires_grad] for model in self.models.values()]
-        , [])
+            , [])
         if self.fp16_mode == 'amp':
             self.master_params = self.model_params
             self.scaler = torch.GradScaler() if self.fp16_mode == 'amp' else None
@@ -116,22 +116,30 @@ class BasicTrainer(Trainer):
 
         # Initialize optimizer
         if hasattr(torch.optim, self.optimizer_config['name']):
-            self.optimizer = getattr(torch.optim, self.optimizer_config['name'])(self.master_params, **self.optimizer_config['args'])
+            self.optimizer = getattr(torch.optim, self.optimizer_config['name'])(self.master_params,
+                                                                                 **self.optimizer_config['args'])
         else:
-            self.optimizer = globals()[self.optimizer_config['name']](self.master_params, **self.optimizer_config['args'])
-        
+            self.optimizer = globals()[self.optimizer_config['name']](self.master_params,
+                                                                      **self.optimizer_config['args'])
+
         # Initalize learning rate scheduler
         if self.lr_scheduler_config is not None:
             if hasattr(torch.optim.lr_scheduler, self.lr_scheduler_config['name']):
-                self.lr_scheduler = getattr(torch.optim.lr_scheduler, self.lr_scheduler_config['name'])(self.optimizer, **self.lr_scheduler_config['args'])
+                self.lr_scheduler = getattr(torch.optim.lr_scheduler, self.lr_scheduler_config['name'])(self.optimizer,
+                                                                                                        **
+                                                                                                        self.lr_scheduler_config[
+                                                                                                            'args'])
             else:
-                self.lr_scheduler = globals()[self.lr_scheduler_config['name']](self.optimizer, **self.lr_scheduler_config['args'])
+                self.lr_scheduler = globals()[self.lr_scheduler_config['name']](self.optimizer,
+                                                                                **self.lr_scheduler_config['args'])
 
         # Initialize elastic memory controller
         if self.elastic_controller_config is not None:
-            assert any([isinstance(model, (elastic_utils.ElasticModule, elastic_utils.ElasticModuleMixin)) for model in self.models.values()]), \
+            assert any([isinstance(model, (elastic_utils.ElasticModule, elastic_utils.ElasticModuleMixin)) for model in
+                        self.models.values()]), \
                 'No elastic module found in models, please inherit from ElasticModule or ElasticModuleMixin'
-            self.elastic_controller = getattr(elastic_utils, self.elastic_controller_config['name'])(**self.elastic_controller_config['args'])
+            self.elastic_controller = getattr(elastic_utils, self.elastic_controller_config['name'])(
+                **self.elastic_controller_config['args'])
             for model in self.models.values():
                 if isinstance(model, (elastic_utils.ElasticModule, elastic_utils.ElasticModuleMixin)):
                     model.register_memory_controller(self.elastic_controller)
@@ -152,7 +160,7 @@ class BasicTrainer(Trainer):
         state_dicts = {name: model.state_dict() for name, model in self.models.items()}
         master_params_names = sum(
             [[(name, n) for n, p in model.named_parameters() if p.requires_grad] for name, model in self.models.items()]
-        , [])
+            , [])
         for i, (model_name, param_name) in enumerate(master_params_names):
             state_dicts[model_name][param_name] = master_params[i]
         return state_dicts
@@ -163,7 +171,7 @@ class BasicTrainer(Trainer):
         """
         master_params_names = sum(
             [[(name, n) for n, p in model.named_parameters() if p.requires_grad] for name, model in self.models.items()]
-        , [])
+            , [])
         params = [state_dicts[name][param_name] for name, param_name in master_params_names]
         if self.fp16_mode == 'inflat_all':
             model_params_to_master_params(params, master_params)
@@ -178,10 +186,11 @@ class BasicTrainer(Trainer):
         """
         if self.is_master:
             print(f'\nLoading checkpoint from step {step}...', end='')
-            
+
         model_ckpts = {}
         for name, model in self.models.items():
-            model_ckpt = torch.load(read_file_dist(os.path.join(load_dir, 'ckpts', f'{name}_step{step:07d}.pt')), map_location=self.device, weights_only=True)
+            model_ckpt = torch.load(read_file_dist(os.path.join(load_dir, 'ckpts', f'{name}_step{step:07d}.pt')),
+                                    map_location=self.device, weights_only=True)
             model_ckpts[name] = model_ckpt
             model.load_state_dict(model_ckpt)
             if self.fp16_mode == 'inflat_all':
@@ -193,12 +202,14 @@ class BasicTrainer(Trainer):
             for i, ema_rate in enumerate(self.ema_rate):
                 ema_ckpts = {}
                 for name, model in self.models.items():
-                    ema_ckpt = torch.load(os.path.join(load_dir, 'ckpts', f'{name}_ema{ema_rate}_step{step:07d}.pt'), map_location=self.device, weights_only=True)
+                    ema_ckpt = torch.load(os.path.join(load_dir, 'ckpts', f'{name}_ema{ema_rate}_step{step:07d}.pt'),
+                                          map_location=self.device, weights_only=True)
                     ema_ckpts[name] = ema_ckpt
                 self._state_dicts_to_master_params(self.ema_params[i], ema_ckpts)
                 del ema_ckpts
-        
-        misc_ckpt = torch.load(read_file_dist(os.path.join(load_dir, 'ckpts', f'misc_step{step:07d}.pt')), map_location=torch.device('cpu'), weights_only=False)
+
+        misc_ckpt = torch.load(read_file_dist(os.path.join(load_dir, 'ckpts', f'misc_step{step:07d}.pt')),
+                               map_location=torch.device('cpu'), weights_only=False)
         self.optimizer.load_state_dict(misc_ckpt['optimizer'])
         self.step = misc_ckpt['step']
         self.data_sampler.load_state_dict(misc_ckpt['data_sampler'])
@@ -229,15 +240,16 @@ class BasicTrainer(Trainer):
         """
         assert self.is_master, 'save() should be called only by the rank 0 process.'
         print(f'\nSaving checkpoint at step {self.step}...', end='')
-        
+
         model_ckpts = self._master_params_to_state_dicts(self.master_params)
         for name, model_ckpt in model_ckpts.items():
             torch.save(model_ckpt, os.path.join(self.output_dir, 'ckpts', f'{name}_step{self.step:07d}.pt'))
-        
+
         for i, ema_rate in enumerate(self.ema_rate):
             ema_ckpts = self._master_params_to_state_dicts(self.ema_params[i])
             for name, ema_ckpt in ema_ckpts.items():
-                torch.save(ema_ckpt, os.path.join(self.output_dir, 'ckpts', f'{name}_ema{ema_rate}_step{self.step:07d}.pt'))
+                torch.save(ema_ckpt,
+                           os.path.join(self.output_dir, 'ckpts', f'{name}_ema{ema_rate}_step{self.step:07d}.pt'))
 
         misc_ckpt = {
             'optimizer': self.optimizer.state_dict(),
@@ -266,16 +278,18 @@ class BasicTrainer(Trainer):
             print('\nFinetuning from:')
             for name, path in finetune_ckpt.items():
                 print(f'  - {name}: {path}')
-        
+
         model_ckpts = {}
         for name, model in self.models.items():
             model_state_dict = model.state_dict()
             if name in finetune_ckpt:
-                model_ckpt = torch.load(read_file_dist(finetune_ckpt[name]), map_location=self.device, weights_only=True)
+                model_ckpt = torch.load(read_file_dist(finetune_ckpt[name]), map_location=self.device,
+                                        weights_only=True)
                 for k, v in model_ckpt.items():
                     if model_ckpt[k].shape != model_state_dict[k].shape:
                         if self.is_master:
-                            print(f'Warning: {k} shape mismatch, {model_ckpt[k].shape} vs {model_state_dict[k].shape}, skipped.')
+                            print(
+                                f'Warning: {k} shape mismatch, {model_ckpt[k].shape} vs {model_state_dict[k].shape}, skipped.')
                         model_ckpt[k] = model_state_dict[k]
                 model_ckpts[name] = model_ckpt
                 model.load_state_dict(model_ckpt)
@@ -322,12 +336,13 @@ class BasicTrainer(Trainer):
                 # split to avoid OOM
                 for i in range(0, p.numel(), 10000000):
                     sub_size = min(10000000, p.numel() - i)
-                    sub_p = p.detach().view(-1)[i:i+sub_size]
+                    sub_p = p.detach().view(-1)[i:i + sub_size]
                     # gather from all processes
                     sub_p_gather = [torch.empty_like(sub_p) for _ in range(self.world_size)]
                     dist.all_gather(sub_p_gather, sub_p)
                     # check if equal
-                    assert all([torch.equal(sub_p, sub_p_gather[i]) for i in range(self.world_size)]), 'parameters are not consistent across processes'
+                    assert all([torch.equal(sub_p, sub_p_gather[i]) for i in
+                                range(self.world_size)]), 'parameters are not consistent across processes'
         except AssertionError as e:
             if self.is_master:
                 print(f'\n\033[91mError: {e}\033[0m')
@@ -353,7 +368,8 @@ class BasicTrainer(Trainer):
         zero_grad(self.model_params)
         for i, mb_data in enumerate(data_list):
             ## sync at the end of each batch split
-            sync_contexts = [self.training_models[name].no_sync for name in self.training_models] if i != len(data_list) - 1 and self.world_size > 1 else [nullcontext]
+            sync_contexts = [self.training_models[name].no_sync for name in self.training_models] if i != len(
+                data_list) - 1 and self.world_size > 1 else [nullcontext]
             with nested_contexts(*sync_contexts), elastic_controller_context():
                 with amp_context():
                     loss, status = self.training_losses(**mb_data)
@@ -405,20 +421,21 @@ class BasicTrainer(Trainer):
             if not any(not p.grad.isfinite().all() for p in self.model_params):
                 self.optimizer.step()
             else:
-                print('\n\033[93mWarning: NaN detected in gradients. Skipping update.\033[0m') 
-        ## adjust learning rate
+                print('\n\033[93mWarning: NaN detected in gradients. Skipping update.\033[0m')
+                ## adjust learning rate
         if self.lr_scheduler_config is not None:
             statuses[-1]['lr'] = self.lr_scheduler.get_last_lr()[0]
             self.lr_scheduler.step()
 
         # Logs
         step_log['loss'] = dict_reduce(losses, lambda x: np.mean(x))
-        step_log['status'] = dict_reduce(statuses, lambda x: np.mean(x), special_func={'min': lambda x: np.min(x), 'max': lambda x: np.max(x)})
+        step_log['status'] = dict_reduce(statuses, lambda x: np.mean(x),
+                                         special_func={'min': lambda x: np.min(x), 'max': lambda x: np.max(x)})
         if self.elastic_controller_config is not None:
             step_log['elastic'] = dict_reduce(elastic_controller_logs, lambda x: np.mean(x))
         if self.grad_clip is not None:
             step_log['grad_clip'] = self.grad_clip if isinstance(self.grad_clip, float) else self.grad_clip.log()
-            
+
         # Check grad and norm of each param
         if self.log_param_stats:
             param_norms = {}

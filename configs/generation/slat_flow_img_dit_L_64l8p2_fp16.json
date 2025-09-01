@@ -6,14 +6,18 @@
                 "resolution": 64,
                 "in_channels": 8,
                 "out_channels": 8,
-                "model_channels": 1024,
-                "cond_channels": 1024,
-                "num_blocks": 24,
-                "num_heads": 16,
-                "mlp_ratio": 4,
+                "model_channels": 512,
+                "cond_channels": 512,
+                "num_blocks": 12,
+                "num_heads": 8,
+                "mlp_ratio": 2,
                 "patch_size": 2,
                 "num_io_res_blocks": 2,
-                "io_block_channels": [128],
+                "io_block_channels": [
+                    64,
+                    128
+                ],
+                "dropout": 0.1,
                 "pe_mode": "ape",
                 "qk_rms_norm": true,
                 "use_fp16": true
@@ -24,29 +28,29 @@
         "name": "ImageConditionedSLat",
         "args": {
             "latent_model": "dinov2_vitl14_reg_slat_enc_swin8_B_64l8_fp16",
-            "min_aesthetic_score": 4.5,
+            "min_aesthetic_score": 3.5,
             "max_num_voxels": 32768,
-            "image_size": 518,
+            "image_size": 1024,
             "normalization": {
                 "mean": [
-                    -2.1687545776367188,
-                    -0.004347046371549368,
-                    -0.13352349400520325,
-                    -0.08418072760105133,
-                    -0.5271206498146057,
-                    0.7238689064979553,
-                    -1.1414450407028198,
-                    1.2039363384246826
+                    -2.468077942269174,
+                    1.7057099328402807,
+                    -0.8113670874907372,
+                    -1.635217054004033,
+                    -0.2025040287971864,
+                    -0.014173385764952594,
+                    -2.3268425424808514,
+                    -0.5189504275782416
                 ],
                 "std": [
-                    2.377650737762451,
-                    2.386378288269043,
-                    2.124418020248413,
-                    2.1748552322387695,
-                    2.663944721221924,
-                    2.371192216873169,
-                    2.6217446327209473,
-                    2.684523105621338
+                    1.735324246628345,
+                    1.6963714637869083,
+                    1.6502058479613126,
+                    2.311359246951001,
+                    2.4560435155990765,
+                    2.068370366933479,
+                    2.3688337976799465,
+                    2.441779174996979
                 ]
             },
             "pretrained_slat_dec": "microsoft/TRELLIS-image-large/ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16"
@@ -55,47 +59,59 @@
     "trainer": {
         "name": "ImageConditionedSparseFlowMatchingCFGTrainer",
         "args": {
-            "max_steps": 1000000,
-            "batch_size_per_gpu": 8,
-            "batch_split": 4,
+            "max_steps": 100000,
+            "batch_size_per_gpu": 2,
+            "batch_split": 1,
             "optimizer": {
                 "name": "AdamW",
                 "args": {
-                    "lr": 0.0001,
-                    "weight_decay": 0.0
+                    "lr": 0.00001,
+                    "weight_decay": 0.05,
+                    "betas": [
+                        0.9,
+                        0.999
+                    ]
+                }
+            },
+            "lr_scheduler": {
+                "name": "CosineAnnealingLR",
+                "args": {
+                    "T_max": 100000,
+                    "eta_min": 1e-6
                 }
             },
             "ema_rate": [
+                0.999,
                 0.9999
             ],
             "fp16_mode": "inflat_all",
-            "fp16_scale_growth": 0.001,
+            "fp16_scale_growth": 0.0005,
             "elastic": {
                 "name": "LinearMemoryController",
                 "args": {
-                    "target_ratio": 0.75,
-                    "max_mem_ratio_start": 0.5
+                    "target_ratio": 0.5,
+                    "max_mem_ratio_start": 0.3
                 }
             },
             "grad_clip": {
                 "name": "AdaptiveGradClipper",
                 "args": {
-                    "max_norm": 1.0,
-                    "clip_percentile": 95
+                    "max_norm": 0.1,
+                    "clip_percentile": 85
                 }
             },
-            "i_log": 500,
-            "i_sample": 10000,
-            "i_save": 10000,
-            "p_uncond": 0.1,
+            "i_log": 100,
+            "i_sample": 2000,
+            "i_save": 2000,
+            "p_uncond": 0.02,
             "t_schedule": {
                 "name": "logitNormal",
                 "args": {
-                    "mean": 1.0,
-                    "std": 1.0
+                    "mean": 0.5,
+                    "std": 0.5
                 }
             },
-            "sigma_min": 1e-5,
+            "sigma_min": 1e-4,
             "image_cond_model": "dinov2_vitl14_reg"
         }
     }

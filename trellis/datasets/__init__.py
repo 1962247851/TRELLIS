@@ -14,6 +14,9 @@ __attributes = {
     'SLat': 'structured_latent',
     'TextConditionedSLat': 'structured_latent',
     'ImageConditionedSLat': 'structured_latent',
+    
+    'ImageVolumeConditionedStructuredLatent': 'structured_latent_volume',
+    'MetaFood3DVolumeDataset': 'structured_latent_volume',
 }
 
 __submodules = []
@@ -54,5 +57,10 @@ if __name__ == '__main__':
         SLat,
         TextConditionedSLat,
         ImageConditionedSLat,
+    )
+    
+    from .structured_latent_volume import (
+        ImageVolumeConditionedStructuredLatent,
+        MetaFood3DVolumeDataset,
     )
     

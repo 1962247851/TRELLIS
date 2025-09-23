@@ -15,6 +15,7 @@ from .flow_matching import FlowMatchingTrainer
 from .mixins.classifier_free_guidance import ClassifierFreeGuidanceMixin
 from .mixins.text_conditioned import TextConditionedMixin
 from .mixins.image_conditioned import ImageConditionedMixin
+from .mixins.volume_conditioned import VolumeConditionedMixin
 
 
 class SparseFlowMatchingTrainer(FlowMatchingTrainer):
@@ -284,3 +285,96 @@ class ImageConditionedSparseFlowMatchingCFGTrainer(ImageConditionedMixin, Sparse
         image_cond_model (str): Image conditioning model.
     """
     pass
+
+
+class ImageVolumeConditionedSparseFlowMatchingCFGTrainer(VolumeConditionedMixin, ImageConditionedMixin, SparseFlowMatchingCFGTrainer):
+    """
+    Trainer for sparse image and volume conditioned diffusion model with flow matching objective and classifier-free guidance.
+    
+    这个训练器结合了图像条件和体积约束，适用于需要生成具有现实体积的3D模型的场景。
+    
+    Args:
+        models (dict[str, nn.Module]): Models to train.
+        dataset (torch.utils.data.Dataset): Dataset.
+        output_dir (str): Output directory.
+        load_dir (str): Load directory.
+        step (int): Step to load.
+        batch_size (int): Batch size.
+        batch_size_per_gpu (int): Batch size per GPU. If specified, batch_size will be ignored.
+        batch_split (int): Split batch with gradient accumulation.
+        max_steps (int): Max steps.
+        optimizer (dict): Optimizer config.
+        lr_scheduler (dict): Learning rate scheduler config.
+        elastic (dict): Elastic memory management config.
+        grad_clip (float or dict): Gradient clip config.
+        ema_rate (float or list): Exponential moving average rates.
+        fp16_mode (str): FP16 mode.
+            - None: No FP16.
+            - 'inflat_all': Hold a inflated fp32 master param for all params.
+            - 'amp': Automatic mixed precision.
+        fp16_scale_growth (float): Scale growth for FP16 gradient backpropagation.
+        finetune_ckpt (dict): Finetune checkpoint.
+        log_param_stats (bool): Log parameter stats.
+        i_print (int): Print interval.
+        i_log (int): Log interval.
+        i_sample (int): Sample interval.
+        i_save (int): Save interval.
+        i_ddpcheck (int): DDP check interval.
+
+        t_schedule (dict): Time schedule for flow matching.
+        sigma_min (float): Minimum noise level.
+        p_uncond (float): Probability of dropping conditions.
+        image_cond_model (str): Image conditioning model.
+        
+        # Volume-specific parameters
+        volume_embed_dim (int): 体积嵌入的维度
+        volume_range (tuple): 体积的范围 (min_volume, max_volume)，单位为立方厘米
+        volume_loss_weight (float): 体积损失的权重
+        volume_condition_prob (float): 在训练期间使用体积条件的概率
+    """
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+    def training_losses(self, x_0, cond=None, volume=None, **kwargs):
+        """
+        计算训练损失，包括流匹配损失和体积预测损失
+        
+        Args:
+            x_0: The [N x C x ...] tensor of noiseless inputs.
+            cond: The conditioning data (images).
+            volume: The volume data.
+            kwargs: Additional arguments.
+            
+        Returns:
+            损失字典和统计信息字典
+        """
+        # 调用父类的训练损失计算
+        terms, stats = super().training_losses(x_0, cond, volume=volume, **kwargs)
+        
+        # 如果有体积信息，添加体积预测损失
+        if volume is not None:
+            # 获取模型的中间特征用于体积预测
+            noise = torch.randn_like(x_0.feats)
+            t = self.sample_t(x_0.feats.shape[0]).to(x_0.device).float()
+            x_t = self.diffuse(x_0, t, noise=noise)
+            cond_with_volume = self.get_cond(cond, volume=volume, **kwargs)
+            
+            # 获取模型的前向传播输出
+            with torch.no_grad():
+                model_output = self.training_models['denoiser'](x_t, t * 1000, cond_with_volume, **kwargs)
+            
+            # 从模型输出计算体积损失
+            if hasattr(self.training_models['denoiser'], 'blocks'):
+                # 获取模型中间特征进行体积预测
+                features = model_output.feats  # 使用模型输出特征
+                volume_loss = self.compute_volume_loss(features, volume)
+                
+                # 将体积损失添加到总损失中
+                terms["volume_loss"] = volume_loss
+                terms["loss"] = terms["loss"] + self.volume_loss_weight * volume_loss
+                
+                # 添加体积相关的统计信息
+                stats["volume_loss"] = volume_loss.item()
+                
+        return terms, stats
